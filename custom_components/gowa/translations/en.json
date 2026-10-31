@@ -93,27 +93,26 @@
   },
   "entity": {
     "binary_sensor": {
-      "api_reachable": {"name": "API reachable"},
-      "authenticated": {"name": "API authenticated"},
-      "connected": {"name": "WhatsApp connected"},
-      "logged_in": {"name": "WhatsApp logged in"}
+      "health": {
+        "name": "Health",
+        "state_attributes": {"reason": {"name": "Failure reason"}}
+      }
     },
     "sensor": {
-      "status": {
-        "name": "Status",
+      "whatsapp": {
+        "name": "WhatsApp account",
         "state": {
-          "healthy": "Healthy",
+          "ready": "Ready",
           "disconnected": "Disconnected",
-          "connected_not_logged_in": "Connected, not logged in",
-          "authentication_failed": "Authentication failed",
-          "unreachable": "Unreachable",
-          "api_error": "API error"
+          "not_logged_in": "Not logged in"
+        },
+        "state_attributes": {
+          "paired_number": {"name": "Paired number"},
+          "device_id": {"name": "GOWA device ID"},
+          "connected": {"name": "Connected"},
+          "logged_in": {"name": "Logged in"},
+          "error": {"name": "Error"}
         }
-      },
-      "last_send_result": {
-        "name": "Last send result",
-        "state": {"never_sent": "Never sent", "accepted": "Accepted by GOWA", "failed": "Failed"},
-        "state_attributes": {"error": {"name": "Error"}}
       }
     }
   },
@@ -131,7 +130,8 @@
   "exceptions": {
     "select_connection": {"message": "Select one loaded GOWA connection. If multiple connections exist, set the GOWA connection field."},
     "invalid_message_or_phone": {"message": "Provide a valid, unambiguous phone number and a non-empty message."},
-    "send_failed": {"message": "WhatsApp send failed: {error} No automatic resend was attempted; check GOWA before retrying to avoid duplicates."}
+    "send_failed": {"message": "WhatsApp send failed: {error} No automatic resend was attempted; check GOWA before retrying to avoid duplicates."},
+    "send_uncertain": {"message": "WhatsApp send outcome is unknown: {error} No automatic resend was attempted. Check GOWA or WhatsApp before retrying to avoid duplicates."}
   },
   "issues": {
     "connection_problem": {

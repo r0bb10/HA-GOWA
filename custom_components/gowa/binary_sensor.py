@@ -1,4 +1,4 @@
-"""GOWA reachability, authentication and WhatsApp session diagnostics."""
+"""Authenticated GOWA API health, independent of WhatsApp readiness."""
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
@@ -15,44 +15,28 @@ from .entity import GowaEntity
 async def async_setup_entry(
     hass: HomeAssistant, entry: GowaConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
-    """Add a separate entity for each observable health dimension."""
-    async_add_entities(
-        GowaBinarySensor(entry.runtime_data, key)
-        for key in ("api_reachable", "authenticated", "connected", "logged_in")
-    )
+    async_add_entities([GowaHealthSensor(entry.runtime_data)])
 
 
-class GowaBinarySensor(GowaEntity, BinarySensorEntity):
-    """Never report stale session data as a current healthy state."""
+class GowaHealthSensor(GowaEntity, BinarySensorEntity):
+    """Remain available to report failed API probes."""
 
-    def __init__(self, coordinator: GowaCoordinator, key: str) -> None:
-        super().__init__(coordinator, key)
-        self.key = key
-        if key in ("api_reachable", "connected"):
-            self._attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+
+    def __init__(self, coordinator: GowaCoordinator) -> None:
+        super().__init__(coordinator, "health")
 
     @property
-    def available(self) -> bool:
-        if not (health := self.coordinator.data):
-            return False
-        if self.key == "api_reachable":
-            return True
-        if self.key == "authenticated":
-            return health.authenticated is not None
-        return health.session is not None
+    def is_on(self) -> bool:
+        return bool(self.coordinator.data and self.coordinator.data.healthy)
 
     @property
-    def is_on(self) -> bool | None:
-        if not (health := self.coordinator.data):
-            return None
-        if self.key == "api_reachable":
-            return health.reachable
-        if self.key == "authenticated":
-            return health.authenticated
-        if health.session is None:
-            return None
-        return (
-            health.session.connected
-            if self.key == "connected"
-            else health.session.logged_in
-        )
+    def extra_state_attributes(self) -> dict[str, str | None]:
+        health = self.coordinator.data
+        return {
+            "reason": None
+            if health and health.healthy
+            else health.status
+            if health
+            else "unknown"
+        }

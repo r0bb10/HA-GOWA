@@ -12,7 +12,7 @@ from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
 
-from .api import GowaAuthError, GowaClient, GowaError
+from .api import GowaAuthError, GowaClient, GowaError, GowaSendUncertainError
 from .const import (
     CONF_DEFAULT_COUNTRY,
     CONF_DEVICE_ID,
@@ -98,8 +98,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: GowaConfigEntry) -> bool
         f"{entry.entry_id}_recipient_{recipient['id']}"
         for recipient in entry.options.get(CONF_RECIPIENTS, [])
     }
+    retired_ids = {
+        (domain, f"{entry.entry_id}_{key}")
+        for domain, key in (
+            ("binary_sensor", "api_reachable"),
+            ("binary_sensor", "authenticated"),
+            ("binary_sensor", "connected"),
+            ("binary_sensor", "logged_in"),
+            ("sensor", "status"),
+            ("sensor", "last_send_result"),
+        )
+    }
     for entity in er.async_entries_for_config_entry(registry, entry.entry_id):
-        if entity.domain == "notify" and entity.unique_id not in valid_ids:
+        if (entity.domain == "notify" and entity.unique_id not in valid_ids) or (
+            entity.domain,
+            entity.unique_id,
+        ) in retired_ids:
             registry.async_remove(entity.entity_id)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -120,6 +134,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: GowaConfigEntry) -> boo
 async def async_remove_entry(hass: HomeAssistant, entry: GowaConfigEntry) -> None:
     """Remove the corresponding health repair, never the GOWA device."""
     ir.async_delete_issue(hass, DOMAIN, f"{ISSUE_CONNECTION}_{entry.entry_id}")
+    hass.data.get(DOMAIN, {}).get("send_locks", {}).pop(entry.entry_id, None)
 
 
 async def async_send(coordinator: GowaCoordinator, phone: str, message: str) -> str:
@@ -135,16 +150,17 @@ async def async_send(coordinator: GowaCoordinator, phone: str, message: str) -> 
             translation_domain=DOMAIN, translation_key="invalid_message_or_phone"
         ) from None
     try:
-        message_id = await coordinator.client.async_send_message(phone, message)
+        async with coordinator.send_lock:
+            message_id = await coordinator.client.async_send_message(phone, message)
     except GowaError as err:
-        coordinator.record_send(str(err))
         if isinstance(err, GowaAuthError):
             coordinator.entry.async_start_reauth(coordinator.hass)
         await coordinator.async_request_refresh()
         raise HomeAssistantError(
             translation_domain=DOMAIN,
-            translation_key="send_failed",
+            translation_key="send_uncertain"
+            if isinstance(err, GowaSendUncertainError)
+            else "send_failed",
             translation_placeholders={"error": str(err)},
         ) from None
-    coordinator.record_send()
     return message_id

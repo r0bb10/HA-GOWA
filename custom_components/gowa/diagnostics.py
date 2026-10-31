@@ -20,5 +20,5 @@ async def async_get_config_entry_diagnostics(
         "authenticated": health.authenticated if health else None,
         "connected": health.session.connected if health and health.session else None,
         "logged_in": health.session.logged_in if health and health.session else None,
-        "last_send_result": coordinator.last_send_result,
+        "account_error": health.account_error if health else None,
     }

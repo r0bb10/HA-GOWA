@@ -1,4 +1,4 @@
-"""Overall GOWA health and the most recent send result."""
+"""Selected WhatsApp account status and paired number, never session management."""
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.core import HomeAssistant
@@ -12,46 +12,42 @@ from .entity import GowaEntity
 async def async_setup_entry(
     hass: HomeAssistant, entry: GowaConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
-    """Set up diagnostics."""
-    async_add_entities(
-        [GowaStatusSensor(entry.runtime_data), GowaSendSensor(entry.runtime_data)]
-    )
+    async_add_entities([GowaAccountSensor(entry.runtime_data)])
 
 
-class GowaStatusSensor(GowaEntity, SensorEntity):
-    """Human-readable state remains available during server outages."""
+class GowaAccountSensor(GowaEntity, SensorEntity):
+    """Unknown account status is unavailable, never stale readiness."""
 
     _attr_device_class = SensorDeviceClass.ENUM
-    _attr_options = [
-        "healthy",
-        "disconnected",
-        "connected_not_logged_in",
-        "authentication_failed",
-        "unreachable",
-        "api_error",
-    ]
+    _attr_options = ["ready", "disconnected", "not_logged_in"]
 
     def __init__(self, coordinator: GowaCoordinator) -> None:
-        super().__init__(coordinator, "status")
+        super().__init__(coordinator, "whatsapp")
+
+    @property
+    def available(self) -> bool:
+        health = self.coordinator.data
+        return bool(health and health.session)
 
     @property
     def native_value(self) -> str | None:
-        return self.coordinator.data.status if self.coordinator.data else None
-
-
-class GowaSendSensor(GowaEntity, SensorEntity):
-    """Accepted never implies delivered/read; content is never stored."""
-
-    _attr_device_class = SensorDeviceClass.ENUM
-    _attr_options = ["never_sent", "accepted", "failed"]
-
-    def __init__(self, coordinator: GowaCoordinator) -> None:
-        super().__init__(coordinator, "last_send_result")
+        health = self.coordinator.data
+        if not health or not (session := health.session):
+            return None
+        if not session.logged_in:
+            return "not_logged_in"
+        return "ready" if session.connected else "disconnected"
 
     @property
-    def native_value(self) -> str:
-        return self.coordinator.last_send_result
-
-    @property
-    def extra_state_attributes(self) -> dict[str, str | None]:
-        return {"error": self.coordinator.last_send_error}
+    def extra_state_attributes(self) -> dict:
+        health = self.coordinator.data
+        session = health.session if health else None
+        return {
+            "paired_number": session.paired_number if session else None,
+            "device_id": self.coordinator.client.device_id,
+            "connected": session.connected if session else None,
+            "logged_in": session.logged_in if session else None,
+            "error": health.account_error or (None if health.healthy else health.status)
+            if health
+            else "unknown",
+        }
