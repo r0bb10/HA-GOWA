@@ -1,0 +1,15 @@
+{
+  "entity": {
+    "binary_sensor": {
+      "authenticated": {"default": "mdi:account-check"},
+      "logged_in": {"default": "mdi:account-key"}
+    },
+    "sensor": {
+      "status": {"default": "mdi:whatsapp"},
+      "last_send_result": {"default": "mdi:message-check"}
+    }
+  },
+  "services": {
+    "send_message": {"service": "mdi:whatsapp"}
+  }
+}

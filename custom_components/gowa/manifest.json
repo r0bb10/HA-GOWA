@@ -1,0 +1,13 @@
+{
+  "domain": "gowa",
+  "name": "GOWA",
+  "categories": ["messaging_notifications.chat_apps"],
+  "codeowners": ["@r0bb10"],
+  "config_flow": true,
+  "documentation": "https://github.com/r0bb10/HA-GOWA",
+  "integration_type": "service",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/r0bb10/HA-GOWA/issues",
+  "requirements": ["phonenumbers==9.0.42"],
+  "version": "2026.0.0"
+}

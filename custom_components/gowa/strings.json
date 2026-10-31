@@ -1,0 +1,142 @@
+{
+  "title": "GOWA",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to GOWA",
+        "description": "Connect to your existing GOWA server using HTTP Basic Auth. GOWA remains responsible for pairing and managing WhatsApp. This integration uses an unofficial WhatsApp client; account restrictions remain possible. Use HTTPS outside a trusted LAN/VPN.",
+        "data": {"url": "GOWA address", "username": "Username", "password": "Password"},
+        "data_description": {"url": "IP/hostname with optional port and base path. Without a scheme, private IPs and local hostnames use HTTP; public hosts use HTTPS. Include http:// or https:// to override."}
+      },
+      "device": {
+        "title": "Select the sending device",
+        "description": "Select an existing GOWA device. A disconnected or logged-out device can still be monitored. Pairing and session management must be performed in GOWA.",
+        "data": {"device_id": "GOWA device"}
+      },
+      "reconfigure": {
+        "title": "Reconfigure GOWA connection",
+        "description": "Update the URL and credentials, then select the existing sending device. Re-enter the password; stored passwords are not displayed. Recipient entities keep their identity.",
+        "data": {"url": "GOWA address", "username": "Username", "password": "Password"},
+        "data_description": {"url": "IP/hostname with optional port and base path. Without a scheme, private IPs and local hostnames use HTTP; public hosts use HTTPS. Include http:// or https:// to override."}
+      },
+      "reauth_confirm": {
+        "title": "Authenticate with GOWA again",
+        "description": "GOWA rejected the credentials. Enter the connection details again. This does not pair or modify your WhatsApp session.",
+        "data": {"url": "GOWA address", "username": "Username", "password": "Password"},
+        "data_description": {"url": "IP/hostname with optional port and base path. Without a scheme, private IPs and local hostnames use HTTP; public hosts use HTTPS. Include http:// or https:// to override."}
+      }
+    },
+    "error": {
+      "invalid_connection": "Enter a valid IP address or hostname, optionally with a port and http:// or https://. Do not include embedded credentials, queries or fragments. The username must not contain a colon.",
+      "invalid_auth": "GOWA rejected the username or password.",
+      "cannot_connect": "Cannot reach GOWA. Check the URL, network connection and TLS certificate.",
+      "api_error": "GOWA returned an unsuccessful or unexpected response. Check the selected device and the GOWA server.",
+      "no_devices": "No registered devices were found. Configure a device in GOWA first.",
+      "device_missing": "The selected device no longer exists in GOWA. Use Reconfigure to select another device."
+    },
+    "abort": {
+      "already_configured": "This server and device are already configured.",
+      "reauth_successful": "GOWA authentication was updated successfully.",
+      "reconfigure_successful": "GOWA connection was updated successfully."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "GOWA recipients and preferences",
+        "description": "Manage native notification recipients here. Use the integration's Reconfigure action to change its server, credentials or sending device.",
+        "menu_options": {
+          "add_recipient": "Add recipient",
+          "edit_recipient": "Edit recipient",
+          "remove_recipient": "Remove recipient",
+          "settings": "Phone number preferences"
+        }
+      },
+      "add_recipient": {
+        "title": "Add notification recipient",
+        "description": "Enter a full international phone number (with or without +). National shorthand requires a default country in Phone number preferences. The optional person link is metadata: it does not change presence or automatically route person notifications.",
+        "data": {"name": "Recipient name", "phone": "Phone number", "person": "Home Assistant person (optional)"}
+      },
+      "edit_recipient": {
+        "title": "Choose a recipient to edit",
+        "data": {"recipient": "Recipient"}
+      },
+      "recipient": {
+        "title": "Edit notification recipient",
+        "description": "Changing these details preserves the notification entity's identity. Clear the person field to remove the optional association.",
+        "data": {"name": "Recipient name", "phone": "Phone number", "person": "Home Assistant person (optional)"}
+      },
+      "remove_recipient": {
+        "title": "Choose a recipient to remove",
+        "data": {"recipient": "Recipient"}
+      },
+      "confirm_remove": {
+        "title": "Remove {name}?",
+        "description": "This removes the recipient's notification entity. Automations targeting that entity must be updated. Nothing is removed from GOWA or WhatsApp."
+      },
+      "settings": {
+        "title": "Phone number preferences",
+        "description": "Optional two-letter country code, such as IT, GB or US, for national phone numbers. Leave empty to require international input. Existing recipients are already stored internationally and will not change. If input is ambiguous, use + followed by the country code.",
+        "data": {"default_country": "Default country (ISO alpha-2)"}
+      }
+    },
+    "error": {
+      "invalid_recipient": "Enter a non-empty name and a valid, unambiguous phone number. Use + and the country code if necessary.",
+      "invalid_person": "Select an existing Home Assistant person.",
+      "duplicate_phone": "This phone number is already configured as a recipient.",
+      "invalid_country": "Enter a valid two-letter country code or leave the field empty."
+    },
+    "abort": {
+      "no_recipients": "No recipients are configured yet. Choose Add recipient first.",
+      "recipient_missing": "This recipient no longer exists. Reopen the configuration."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "api_reachable": {"name": "API reachable"},
+      "authenticated": {"name": "API authenticated"},
+      "connected": {"name": "WhatsApp connected"},
+      "logged_in": {"name": "WhatsApp logged in"}
+    },
+    "sensor": {
+      "status": {
+        "name": "Status",
+        "state": {
+          "healthy": "Healthy",
+          "disconnected": "Disconnected",
+          "connected_not_logged_in": "Connected, not logged in",
+          "authentication_failed": "Authentication failed",
+          "unreachable": "Unreachable",
+          "api_error": "API error"
+        }
+      },
+      "last_send_result": {
+        "name": "Last send result",
+        "state": {"never_sent": "Never sent", "accepted": "Accepted by GOWA", "failed": "Failed"},
+        "state_attributes": {"error": {"name": "Error"}}
+      }
+    }
+  },
+  "services": {
+    "send_message": {
+      "name": "Send WhatsApp message",
+      "description": "Send a text message to a dynamic phone number through GOWA. Success means accepted by GOWA, not delivered or read. Ambiguous failures are never automatically retried.",
+      "fields": {
+        "config_entry_id": {"name": "GOWA connection", "description": "Required if more than one GOWA connection is loaded."},
+        "phone": {"name": "Recipient phone", "description": "International number, with or without +. National input requires a default country."},
+        "message": {"name": "Message", "description": "Text to send."}
+      }
+    }
+  },
+  "exceptions": {
+    "select_connection": {"message": "Select one loaded GOWA connection. If multiple connections exist, set the GOWA connection field."},
+    "invalid_message_or_phone": {"message": "Provide a valid, unambiguous phone number and a non-empty message."},
+    "send_failed": {"message": "WhatsApp send failed: {error} No automatic resend was attempted; check GOWA before retrying to avoid duplicates."}
+  },
+  "issues": {
+    "connection_problem": {
+      "title": "GOWA needs attention",
+      "description": "The GOWA health check reports: {status}. Check the integration's status entities and the GOWA server. For authentication failures, update credentials through the reauthentication flow. For WhatsApp disconnection or logout, use GOWA's own management UI. This warning clears after a healthy poll."
+    }
+  }
+}

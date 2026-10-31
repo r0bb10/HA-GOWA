@@ -1,0 +1,17 @@
+send_message:
+  fields:
+    config_entry_id:
+      selector:
+        config_entry:
+          integration: gowa
+    phone:
+      required: true
+      example: "+393471234567"
+      selector:
+        text:
+          type: tel
+    message:
+      required: true
+      selector:
+        text:
+          multiline: true

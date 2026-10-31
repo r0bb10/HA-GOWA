@@ -1,0 +1,306 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "20*"
+      - "v20*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. 2026.10.0 or v2026.10.0)"
+        required: true
+        type: string
+      force:
+        description: "Overwrite an existing release ZIP"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # Validate and package
+  validate:
+    name: Validate and package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      tag: ${{ steps.source.outputs.tag }}
+      commit: ${{ steps.source.outputs.commit }}
+      version: ${{ steps.metadata.outputs.version }}
+      filename: ${{ steps.metadata.outputs.filename }}
+      name: ${{ steps.metadata.outputs.name }}
+    steps:
+      # Source
+      - name: Check out source
+        uses: actions/checkout@main
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@main
+        with:
+          python-version: "3.14"
+      - name: Resolve release source
+        id: source
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        shell: python
+        run: |
+          import os
+          import re
+          import subprocess
+
+          tag = os.environ["RELEASE_TAG"]
+          if re.fullmatch(r"v?20\d{2}\.([1-9]|1[0-2])\.(0|[1-9]\d*)", tag) is None:
+              raise SystemExit("Use YYYY.M.PATCH or vYYYY.M.PATCH, e.g. 2026.10.0")
+          result = subprocess.run(
+              ["git", "rev-parse", "--verify", f"refs/tags/{tag}^{{commit}}"],
+              text=True, capture_output=True,
+          )
+          if result.returncode == 0:
+              commit = result.stdout.strip()
+              if os.environ["GITHUB_EVENT_NAME"] == "push":
+                  expected = subprocess.check_output(
+                      ["git", "rev-parse", f"{os.environ['GITHUB_SHA']}^{{commit}}"],
+                      text=True,
+                  ).strip()
+                  if commit != expected:
+                      raise SystemExit("Tag moved after the triggering push; refusing to build")
+              subprocess.run(["git", "switch", "--detach", commit], check=True)
+          elif os.environ["GITHUB_EVENT_NAME"] == "push":
+              raise SystemExit("The pushed release tag could not be found")
+          else:
+              commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"tag={tag}\ncommit={commit}\n")
+      - name: Prepare release metadata
+        id: metadata
+        env:
+          RELEASE_TAG: ${{ steps.source.outputs.tag }}
+        shell: python
+        run: |
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          def release_version(tag):
+              if re.fullmatch(r"v?20\d{2}\.([1-9]|1[0-2])\.(0|[1-9]\d*)", tag) is None:
+                  raise ValueError("Use YYYY.M.PATCH or vYYYY.M.PATCH, e.g. 2026.10.0")
+              return tag.removeprefix("v")
+
+          def validate_release(root, tag):
+              version = release_version(tag)
+              manifests = sorted((root / "custom_components").glob("*/manifest.json"))
+              if len(manifests) != 1:
+                  raise ValueError("HACS requires exactly one integration per repository")
+              manifest_path = manifests[0]
+              component = manifest_path.parent.relative_to(root)
+              if manifest_path.is_symlink() or (root / component).is_symlink():
+                  raise ValueError("Integration metadata must not be symlinked")
+              manifest = json.loads(manifest_path.read_text())
+              domain = manifest.get("domain", "")
+              if not isinstance(domain, str) or re.fullmatch(r"[a-z][a-z0-9_]*", domain) is None or domain != component.name:
+                  raise ValueError("Manifest domain must match the integration directory")
+              hacs = json.loads((root / "hacs.json").read_text())
+              filename = hacs.get("filename", "")
+              if hacs.get("zip_release") is not True or not isinstance(filename, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*\.zip", filename) is None:
+                  raise ValueError("hacs.json must enable zip_release with a safe ZIP filename")
+              name = manifest.get("name")
+              if not isinstance(name, str) or not name.strip() or not name.isprintable():
+                  raise ValueError("Manifest must contain a printable integration name")
+              return {"version": version, "component": component, "filename": filename, "name": name}
+
+          def prepare_release(root, tag):
+              metadata = validate_release(root, tag)
+              manifest_path = root / metadata["component"] / "manifest.json"
+              manifest = json.loads(manifest_path.read_text())
+              manifest["version"] = metadata["version"]
+              manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+              return metadata
+
+          def main():
+              metadata = prepare_release(Path.cwd(), os.environ["RELEASE_TAG"])
+              with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+                  for key in ("version", "filename", "name", "component"):
+                      output.write(f"{key}={metadata[key]}\n")
+
+          if __name__ == "__main__":
+              main()
+
+      # Validation
+      - name: Install Ruff
+        run: python -m pip install --disable-pip-version-check ruff==0.17.3
+      - name: Lint Python
+        run: ruff check --isolated --target-version py314 --select E,F,I,UP,B,SIM custom_components
+      - name: Check Python formatting
+        run: ruff format --isolated --target-version py314 --check custom_components
+      - name: Validate with Hassfest
+        uses: home-assistant/actions/hassfest@master
+      - name: Validate with HACS
+        uses: hacs/action@main
+        env:
+          REPOSITORY_REF: ${{ steps.source.outputs.commit }}
+        with:
+          category: integration
+          github_token: ${{ github.token }}
+          comment: "false"
+
+      # Packaging
+      - name: Build HACS ZIP
+        id: package
+        env:
+          RELEASE_COMPONENT: ${{ steps.metadata.outputs.component }}
+          RELEASE_FILENAME: ${{ steps.metadata.outputs.filename }}
+          RELEASE_VERSION: ${{ steps.metadata.outputs.version }}
+        shell: python
+        run: |
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+          from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
+
+          def build_release(root, output, metadata):
+              component = metadata["component"]
+              manifest = json.loads((root / component / "manifest.json").read_text())
+              if manifest.get("version") != metadata["version"]:
+                  raise ValueError("Manifest version changed after validation")
+              result = subprocess.run(
+                  ["git", "ls-files", "-z", "--", str(component), "LICENSE"],
+                  cwd=root, check=True, capture_output=True,
+              )
+              tracked = sorted(Path(name) for name in result.stdout.decode().split("\0") if name)
+              if Path("LICENSE") not in tracked:
+                  raise ValueError("Project LICENSE must be tracked in Git")
+              suffixes = {".py", ".json", ".yaml", ".yml", ".png", ".svg", ".js", ".css", ".html"}
+              included = []
+              for path in tracked:
+                  if path == Path("LICENSE"):
+                      name = "LICENSE"
+                  else:
+                      relative = path.relative_to(component)
+                      if path.suffix not in suffixes or any(
+                          part.startswith(".") or part in {"__pycache__", "tests", "fixtures"} or part.startswith("test_")
+                          for part in relative.parts
+                      ):
+                          raise ValueError(f"Unexpected non-runtime file in integration: {relative}")
+                      name = relative.as_posix()
+                  source = root / path
+                  if source.is_symlink() or not source.is_file():
+                      raise ValueError(f"Release files must be regular files: {path}")
+                  included.append((source, name))
+              required = {"__init__.py", "manifest.json"}
+              if manifest.get("config_flow"):
+                  required.add("config_flow.py")
+              if not required <= {name for _, name in included}:
+                  raise ValueError("Required integration files are missing from Git")
+              output.mkdir(parents=True, exist_ok=True)
+              archive = output / metadata["filename"]
+              with ZipFile(archive, "w", compression=ZIP_DEFLATED, compresslevel=9) as package:
+                  for path, name in included:
+                      info = ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+                      info.compress_type = ZIP_DEFLATED
+                      info.external_attr = 0o100644 << 16
+                      package.writestr(info, path.read_bytes(), compresslevel=9)
+              return archive
+
+          def main():
+              metadata = {
+                  "component": Path(os.environ["RELEASE_COMPONENT"]),
+                  "filename": os.environ["RELEASE_FILENAME"],
+                  "version": os.environ["RELEASE_VERSION"],
+              }
+              archive = build_release(Path.cwd(), Path(os.environ["RUNNER_TEMP"]) / "release", metadata)
+              print(f"Built {archive.name}, version {metadata['version']}")
+
+          if __name__ == "__main__":
+              main()
+      - name: Upload release artifact
+        uses: actions/upload-artifact@main
+        with:
+          name: hacs-release
+          path: ${{ runner.temp }}/release/${{ steps.metadata.outputs.filename }}
+          if-no-files-found: error
+          retention-days: 7
+
+  # Publication
+  release:
+    name: Publish release
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Download release artifact
+        uses: actions/download-artifact@main
+        with:
+          name: hacs-release
+          path: release
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+          RELEASE_COMMIT: ${{ needs.validate.outputs.commit }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+          RELEASE_FILENAME: ${{ needs.validate.outputs.filename }}
+          FORCE_OVERWRITE: ${{ inputs.force || false }}
+        run: |
+          set -euo pipefail
+          if object=$(gh api "repos/$GH_REPO/git/ref/tags/$RELEASE_TAG" \
+            --jq '.object | [.type, .sha] | @tsv' 2>/dev/null); then
+            read -r type sha <<< "$object"
+            while [[ "$type" == "tag" ]]; do
+              object=$(gh api "repos/$GH_REPO/git/tags/$sha" --jq '.object | [.type, .sha] | @tsv')
+              read -r type sha <<< "$object"
+            done
+            if [[ "$type" != "commit" || "$sha" != "$RELEASE_COMMIT" ]]; then
+              echo "::error::Tag points to another commit; refusing to publish."
+              exit 1
+            fi
+          else
+            gh api --method POST "repos/$GH_REPO/git/refs" \
+              -f "ref=refs/tags/$RELEASE_TAG" -f "sha=$RELEASE_COMMIT" > /dev/null
+          fi
+          published_tags=$(gh release list --limit 1000 --exclude-drafts --exclude-pre-releases \
+            --json tagName --jq '.[].tagName')
+          export PUBLISHED_TAGS="$published_tags"
+          mark_latest=$(python3 - <<'PY'
+          import os
+          import re
+
+          def version(tag):
+              if re.fullmatch(r"v?20\d{2}\.([1-9]|1[0-2])\.(0|[1-9]\d*)", tag):
+                  return tuple(map(int, tag.removeprefix("v").split(".")))
+              return None
+
+          previous = [version(tag) for tag in os.environ["PUBLISHED_TAGS"].splitlines()]
+          current = version(os.environ["RELEASE_VERSION"])
+          newer = not previous or all(item is not None for item in previous) and current >= max(previous)
+          print("true" if newer else "false")
+          PY
+          )
+          if draft=$(gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft' 2>/dev/null); then
+            if [[ "$draft" != "true" && "$FORCE_OVERWRITE" != "true" ]]; then
+              echo "::error::Release already published. Enable Force overwrite in a manual run to replace its ZIP."
+              exit 1
+            fi
+            gh release upload "$RELEASE_TAG" "release/$RELEASE_FILENAME" --clobber
+          else
+            gh release create "$RELEASE_TAG" "release/$RELEASE_FILENAME" \
+              --verify-tag --draft --generate-notes --title "$RELEASE_VERSION"
+          fi
+          gh release edit "$RELEASE_TAG" --title "$RELEASE_VERSION" --draft=false --latest="$mark_latest"
